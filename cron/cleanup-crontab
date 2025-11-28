@@ -1,0 +1,14 @@
+# Cleanup Service Cron Jobs
+# Jobs for cleaning up logs, temporary files, and system maintenance
+
+# Clean up old log files every hour (keep last 7 days)
+0 * * * * find /var/log/cron -name "*.log" -mtime +7 -delete
+
+# Clean up Chrome temporary directories daily at 2 AM (keep files less than 1 day old)
+0 2 * * * find /tmp/chrome-* -type d -mtime +1 -exec rm -rf {} + 2>/dev/null || true
+
+# Clean up WebDriver cache weekly on Sundays at 3 AM
+0 3 * * 0 find /root/.wdm -name "*.log" -mtime +7 -delete 2>/dev/null || true
+
+# Clean up VEP files every Sunday at 4 AM
+0 4 * * 0 rm -f /app/resources/vep_files/* 2>/dev/null && echo "$(date): Cleaned VEP files" >> /var/log/cron/cleanup.log || true

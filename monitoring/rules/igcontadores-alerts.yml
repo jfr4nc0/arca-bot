@@ -1,0 +1,52 @@
+groups:
+  - name: ArcaAutoVep.rules
+    rules:
+      # Workflow Failure Rate Alert
+      - alert: HighWorkflowFailureRate
+        expr: (rate(rpa_workflows_total{status="failed"}[5m]) / rate(rpa_workflows_total[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: High workflow failure rate detected
+          description: "Workflow failure rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+      # Browser Session Timeout Alert
+      - alert: BrowserSessionTimeout
+        expr: rpa_browser_session_duration_seconds > 300
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Browser session taking too long
+          description: "Browser session has been active for {{ $value }}s"
+
+      # AFIP Authentication Failures
+      - alert: AFIPAuthenticationFailures
+        expr: increase(rpa_afip_auth_failures_total[5m]) > 3
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Multiple AFIP authentication failures
+          description: "{{ $value }} AFIP authentication failures in the last 5 minutes"
+
+      # Active Browser Sessions Alert
+      - alert: TooManyActiveSessions
+        expr: rpa_active_browser_sessions > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Too many active browser sessions
+          description: "{{ $value }} active browser sessions detected"
+
+      # Workflow Duration Alert
+      - alert: SlowWorkflowExecution
+        expr: histogram_quantile(0.95, rate(rpa_workflow_duration_seconds_bucket[5m])) > 180
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Slow workflow execution detected
+          description: "95th percentile workflow duration is {{ $value }}s"

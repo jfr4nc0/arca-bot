@@ -1,0 +1,4 @@
+.env
+secrets/*
+AGENTS.md
+CLAUDE.md

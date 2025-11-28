@@ -1,0 +1,2 @@
+- Change config from envs to YAML config
+- Test selenium auto-scaler

@@ -1,0 +1,5 @@
+# API Service Cron Jobs
+# Jobs related to API functionality and retry mechanisms
+
+# Run retry service every 10 minutes
+*/10 * * * * curl -X POST http://localhost:8000/retry?max_retries=3 >> /var/log/cron/retry.log 2>&1

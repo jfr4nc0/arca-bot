@@ -1,0 +1,321 @@
+services:
+  # API for Development (uses standalone)
+  api-dev:
+    build: .
+    container_name: ArcaAutoVep_api_dev
+    ports:
+      - "8000:8000"
+      - "5678:5678"
+    depends_on:
+      redis-dev:
+        condition: service_healthy
+      selenium:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis-dev:6379
+      - REDIS_ENABLED=true
+      - ENVIRONMENT=${API_ENVIRONMENT:-development}
+      - MAX_RETRY_ATTEMPTS=3
+      - SELENIUM_URL=http://selenium:4444/wd/hub
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MAX_CONCURRENT_SESSIONS=2
+    volumes:
+      - ./resources:/app/resources
+    restart: unless-stopped
+    profiles: ["dev"]
+
+  # API for Production (uses hub-node architecture)
+  api:
+    build: .
+    container_name: ArcaAutoVep_api
+    ports:
+      - "8000:8000"
+      - "5678:5678"
+    depends_on:
+      redis:
+        condition: service_healthy
+      selenium-hub:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - nginx-proxy-automatizations-api
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - REDIS_ENABLED=true
+      - ENVIRONMENT=${API_ENVIRONMENT:-production}
+      - MAX_RETRY_ATTEMPTS=3
+      - SELENIUM_URL=http://selenium-hub:4444/wd/hub
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MAX_CONCURRENT_SESSIONS=25
+      - ALLOWED_HOSTS=localhost,127.0.0.1
+      - API_AUTH_TOKEN_FILE=/run/secrets/api_token
+      - DRIVE_UPLOAD_ACTIVE=true
+      # - GOOGLE_CREDENTIALS_PATH=/app/secrets/google_credentials.json
+      # - GOOGLE_TOKEN_PATH=/app/secrets/google_token.json
+    volumes:
+      - ./resources:/app/resources
+    restart: unless-stopped
+    profiles: ["prod", "test"]
+    secrets:
+      - api_token
+
+  # Standalone Redis for development only
+  redis-dev:
+    image: redis:7-alpine
+    container_name: ArcaAutoVep_redis_dev
+    ports:
+      - "6380:6379"
+    command: redis-server
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles: ["dev"]
+
+  # Standalone Redis for production only
+  redis:
+    image: redis:7-alpine
+    container_name: ArcaAutoVep_redis_prod
+    ports:
+      - "6380:6379"
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles: ["prod", "test"]
+    volumes:
+      - redis_data:/data
+
+  redis-cli:
+    image: redis:7-alpine
+    container_name: ArcaAutoVep_redis_cli
+    depends_on:
+      - redis
+    command: redis-cli -h redis
+    profiles:
+      - cli
+
+  # Standalone Selenium for development only
+  selenium:
+    image: selenium/standalone-chrome:latest
+    container_name: ArcaAutoVep_selenium
+    ports:
+      - "4444:4444"
+      - "7900:7900" # VNC port for debugging
+    environment:
+      - SE_OPTS=--log-level INFO
+      - SE_NODE_MAX_SESSIONS=5
+      - SE_NODE_SESSION_TIMEOUT=300
+      - JAVA_OPTS=-Xmx2g
+    volumes:
+      - /dev/shm:/dev/shm
+      - ./resources:/tmp/downloads
+    restart: unless-stopped
+    profiles: ["dev"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4444/wd/hub/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Selenium Grid Hub (for scaled production with auto-scaling)
+  selenium-hub:
+    image: selenium/hub:latest
+    container_name: ArcaAutoVep_selenium_hub
+    ports:
+      - "4444:4444"
+    environment:
+      - GRID_MAX_SESSION=10 # Conservative limit for auto-scaling
+      - GRID_BROWSER_TIMEOUT=300
+      - GRID_TIMEOUT=300
+      - SE_SESSION_REQUEST_TIMEOUT=30000 # Wait 30s for nodes to scale up
+      - SE_NEW_SESSION_WAIT_TIMEOUT=30000
+      - GRID_THROW_ON_CAPABILITY_NOT_PRESENT=false
+      - GRID_CLEAN_UP_CYCLE=5000
+      - GRID_UNREGISTER_IF_STILL_DOWN_AFTER=30000
+    restart: unless-stopped
+    profiles: ["prod", "test"]
+    healthcheck:
+      test: ["CMD", "curl", "-s", "http://localhost:4444/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Chrome Node - scalable (auto-scaling enabled)
+  # Note: No container_name to allow multiple instances
+  # Controlled by SeleniumScaler service
+  chrome-node:
+    image: selenium/node-chrome:latest
+    depends_on:
+      - selenium-hub
+    environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - NODE_MAX_INSTANCES=2 # 2 browser instances per node
+      - NODE_MAX_SESSION=2
+      - SE_NODE_MAX_SESSIONS=2
+      - SE_DRAIN_AFTER_SESSION_COUNT=5 # Node stops after 5 sessions
+      - JAVA_OPTS=-Xmx512m # Reduced from 1g for efficiency
+    volumes:
+      - /dev/shm:/dev/shm
+    shm_size: 512m # Reduced from 1gb
+    deploy:
+      replicas: 0 # Start with 0 nodes - scale on demand
+    profiles: ["prod", "test"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5555/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Observability Stack
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: ArcaAutoVep_prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/rules:/etc/prometheus/rules
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:9090/-/healthy",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    profiles: ["dev", "prod", "test"]
+
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: ArcaAutoVep_grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=ArcaAutoVep123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    profiles: ["dev", "prod", "test"]
+
+  # Zookeeper for Kafka coordination
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: ArcaAutoVep_zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles: ["dev", "prod", "test"]
+
+  # Kafka broker
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: ArcaAutoVep_kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "kafka-topics",
+          "--bootstrap-server",
+          "localhost:9092",
+          "--list",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    profiles: ["dev", "prod", "test"]
+
+  # Kafka UI for management and monitoring
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: ArcaAutoVep_kafka_ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: ArcaAutoVep
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    restart: unless-stopped
+    profiles: ["dev", "prod", "test"]
+
+networks:
+  nginx-proxy-automatizations-api:
+    external: true
+
+volumes:
+  redis_data:
+    driver: local
+  cron_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+secrets:
+  api_token:
+    file: ./secrets/api_token

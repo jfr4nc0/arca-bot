@@ -1,0 +1,31 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "rules/*.yml"
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ArcaAutoVep RPA Application
+  - job_name: "ArcaAutoVep-api"
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+    metrics_path: "/metrics"
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # System metrics (if node_exporter is added)
+  - job_name: "node"
+    static_configs:
+      - targets: ["host.docker.internal:9100"]
+    scrape_interval: 30s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []

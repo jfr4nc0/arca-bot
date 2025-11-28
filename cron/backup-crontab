@@ -1,0 +1,5 @@
+# Backup Service Cron Jobs
+# Jobs for archiving and backing up generated files
+
+# Archive and move PDF and QR files every Sunday at 2 AM
+0 2 * * 0 /bin/bash -c 'DATE=$(date +%d%m%Y); cd /app && zip -rm "../tmp/generated_$DATE.zip" resources/pdf/* resources/qr/* 2>/dev/null && echo "$(date): Moved files to generated_$DATE.zip" >> /var/log/cron/backup.log || echo "$(date): Archive failed or no files found" >> /var/log/cron/backup.log'
