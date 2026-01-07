@@ -1,3 +1,3 @@
-- Change config from envs to YAML config
-- Test selenium auto-scaler
-- [Feature] Implement auto facturation for Monotributo 
+[Features]
+- Implement selenium auto-scaler
+- Implement auto facturation for Monotributo 
