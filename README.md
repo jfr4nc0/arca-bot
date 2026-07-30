@@ -1,7 +1,7 @@
 # ArcaBot Automation System
 
 <p align="center">
-  <img src="arcabot.png" alt="ARCA Automation System" width="500">
+  <img src="arcabot.png" alt="ARCA Automation System" width="600">
 </p>
 
 A comprehensive RPA (Robotic Process Automation) system for automating AFIP (Argentina's Federal Tax Authority) workflows, built with FastAPI, Redis, Kafka, Selenium, Docker, and Grafana + Prometheus. The system provides automated debt calculation (CCMA) and tax declaration (DDJJ) workflows with enterprise-grade monitoring and event-driven architecture.
